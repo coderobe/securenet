@@ -29,11 +29,11 @@ type conn struct {
 
 type reReader struct {
 	io.Reader
-	internalConn Conn
+	internalConn conn
 }
 
 func (r reReader) Read(b []byte) (n int, err error) {
-	return r.internalConn.Read(b)
+	return r.internalConn.unbufferedRead(b)
 }
 
 func (c conn) Read(b []byte) (n int, err error) {
