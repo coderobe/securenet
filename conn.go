@@ -27,19 +27,15 @@ type conn struct {
 	buffer                  []byte
 }
 
-type reReader struct {
-	io.Reader
-	internalConn conn
-}
-
-func (r reReader) Read(b []byte) (n int, err error) {
-	return r.internalConn.unbufferedRead(b)
-}
-
 func (c conn) Read(b []byte) (n int, err error) {
 	copied := copy(c.buffer, b)
+	newBuf := make([]byte, len(c.buffer)-copied)
+	c.buffer = newBuf
 	if copied < len(b) {
-		n, err = io.ReadFull(reReader{internalConn: c}, b[copied:])
+		n, err = c.unbufferedRead(b[copied:])
+		if err != nil {
+			return
+		}
 	}
 	return
 }
@@ -56,31 +52,33 @@ func (c conn) unbufferedRead(b []byte) (n int, err error) {
 	if err != nil {
 		return
 	}
-
-	lengthCode := make([]byte, 4)
-	box.OpenAfterPrecomputation(lengthCode, header, &nonce, c.sharedKey)
+	lengthCode := make([]byte, 0)
+	lengthCode, success := box.OpenAfterPrecomputation(lengthCode, header, &nonce, c.sharedKey)
+	if ! success {
+		err = errors.New("OpenAfterPrecomputation failed on header")
+		return
+	}
+	length := binary.LittleEndian.Uint32(lengthCode)
 
 	n, err = io.ReadFull(c.bufferedRead, nonce[:])
 	if err != nil {
 		return
 	}
 
-	length := binary.BigEndian.Uint32(lengthCode)
-
-	n, err = io.ReadFull(c.bufferedRead, nonce[:])
-	if err != nil {
-		return
-	}
-	data := make([]byte, box.Overhead+length)
+	data := make([]byte, length)
 	n, err = io.ReadFull(c.bufferedRead, data)
 	if err != nil {
 		return
 	}
 
-	decrypted := make([]byte, length)
-	box.OpenAfterPrecomputation(decrypted, data, &nonce, c.sharedKey)
+	decrypted, success := box.OpenAfterPrecomputation([]byte{}, data, &nonce, c.sharedKey)
+	if ! success {
+		err = errors.New("OpenAfterPrecomputation failed on data")
+		return
+	}
 
 	copied := copy(b, decrypted)
+
 	if copied < len(decrypted) {
 		c.buffer = make([]byte, len(decrypted)-copied)
 		copied += copy(c.buffer, decrypted[copied:])
@@ -89,38 +87,42 @@ func (c conn) unbufferedRead(b []byte) (n int, err error) {
 		}
 	}
 
+
 	return
 }
 
 func (c conn) Write(b []byte) (n int, err error) {
-	length := make([]byte, 4)
-	out := make([]byte, len(length)+box.Overhead)
-	binary.BigEndian.PutUint32(length, uint32(len(out)))
+	outLen := len(b)+box.Overhead
+	out := make([]byte, 0)
 	var nonce [24]byte
 	n, err = rand.Read(nonce[:])
 	if err != nil {
 		return
 	}
-	box.SealAfterPrecomputation(out, length, &nonce, c.sharedKey)
 	n, err = c.Conn.Write(nonce[:])
-	if err != nil {
-		return
-	}
-	n, err = c.Conn.Write(out)
 	if err != nil {
 		return
 	}
 
-	out = make([]byte, len(b)+box.Overhead)
+	length := make([]byte, 4)
+	lengthIn := uint32(outLen)
+	binary.LittleEndian.PutUint32(length, lengthIn)
+	lengthOut := box.SealAfterPrecomputation([]byte{}, length, &nonce, c.sharedKey)
+	n, err = c.Conn.Write(lengthOut)
+	if err != nil {
+		return
+	}
+
 	n, err = rand.Read(nonce[:])
 	if err != nil {
 		return
 	}
-	box.SealAfterPrecomputation(out, b, &nonce, c.sharedKey)
 	n, err = c.Conn.Write(nonce[:])
 	if err != nil {
 		return
 	}
+
+	out = box.SealAfterPrecomputation([]byte{}, b, &nonce, c.sharedKey)
 	return c.Conn.Write(out)
 }
 
@@ -149,6 +151,7 @@ func Wrap(oc net.Conn) (nc Conn, err error) {
 	if err != nil {
 		return
 	}
+
 	var serverKey [32]byte
 	extra25519.RepresentativeToPublicKey(&serverKey, &serverKeyElligator)
 
