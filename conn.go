@@ -23,7 +23,6 @@ type conn struct {
 	PublicKey               *[32]byte
 	ServerPublicKey         *[32]byte
 	sharedKey               *[32]byte
-	elligatorRepresentative *[32]byte
 	buffer                  []byte
 }
 
@@ -52,8 +51,8 @@ func (c conn) unbufferedRead(b []byte) (n int, err error) {
 	if err != nil {
 		return
 	}
-	lengthCode := make([]byte, 0)
-	lengthCode, success := box.OpenAfterPrecomputation(lengthCode, header, &nonce, c.sharedKey)
+
+	lengthCode, success := box.OpenAfterPrecomputation([]byte{}, header, &nonce, c.sharedKey)
 	if ! success {
 		err = errors.New("OpenAfterPrecomputation failed on header")
 		return
@@ -92,23 +91,19 @@ func (c conn) unbufferedRead(b []byte) (n int, err error) {
 }
 
 func (c conn) Write(b []byte) (n int, err error) {
+	var writebuf []byte
 	outLen := len(b)+box.Overhead
-	out := make([]byte, 0)
 	var nonce [24]byte
 	n, err = rand.Read(nonce[:])
 	if err != nil {
 		return
 	}
-	n, err = c.Conn.Write(nonce[:])
-	if err != nil {
-		return
-	}
+	writebuf = append(writebuf, nonce[:]...)
 
 	length := make([]byte, 4)
 	lengthIn := uint32(outLen)
 	binary.LittleEndian.PutUint32(length, lengthIn)
-	lengthOut := box.SealAfterPrecomputation([]byte{}, length, &nonce, c.sharedKey)
-	n, err = c.Conn.Write(lengthOut)
+	writebuf = append(writebuf, box.SealAfterPrecomputation([]byte{}, length, &nonce, c.sharedKey)...)
 	if err != nil {
 		return
 	}
@@ -117,13 +112,13 @@ func (c conn) Write(b []byte) (n int, err error) {
 	if err != nil {
 		return
 	}
-	n, err = c.Conn.Write(nonce[:])
+	writebuf = append(writebuf, nonce[:]...)
 	if err != nil {
 		return
 	}
 
-	out = box.SealAfterPrecomputation([]byte{}, b, &nonce, c.sharedKey)
-	return c.Conn.Write(out)
+	writebuf = append(writebuf, box.SealAfterPrecomputation([]byte{}, b, &nonce, c.sharedKey)...)
+	return c.Conn.Write(writebuf)
 }
 
 func Wrap(oc net.Conn) (nc Conn, err error) {
@@ -165,7 +160,6 @@ func Wrap(oc net.Conn) (nc Conn, err error) {
 		PublicKey:               &pub,
 		ServerPublicKey:         &serverKey,
 		sharedKey:               &shared,
-		elligatorRepresentative: &elligator,
 	}
 	return
 }
