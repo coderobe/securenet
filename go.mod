@@ -1,4 +1,4 @@
-module coderobe/securenet
+module github.com/coderobe/securenet
 
 go 1.14
 
