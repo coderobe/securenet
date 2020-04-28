@@ -18,12 +18,29 @@ type Conn interface {
 
 type conn struct {
 	net.Conn
-	bufferedRead            *bufio.Reader
-	privateKey              *[32]byte
-	PublicKey               *[32]byte
-	ServerPublicKey         *[32]byte
-	sharedKey               *[32]byte
-	buffer                  []byte
+	bufferedRead    *bufio.Reader
+	lastRead        []byte
+	isUnread        bool
+	privateKey      *[32]byte
+	PublicKey       *[32]byte
+	ServerPublicKey *[32]byte
+	sharedKey       *[32]byte
+	buffer          []byte
+}
+
+func (c conn) ReadByte() (b byte, err error) {
+	if !c.isUnread {
+		c.lastRead = make([]byte, 1)
+		_, err = c.Read(c.lastRead)
+	}
+	b = c.lastRead[0]
+	c.isUnread = false
+	return
+}
+
+func (c conn) UnreadByte() (err error) {
+	c.isUnread = true
+	return
 }
 
 func (c conn) Read(b []byte) (n int, err error) {
@@ -53,7 +70,7 @@ func (c conn) unbufferedRead(b []byte) (n int, err error) {
 	}
 
 	lengthCode, success := box.OpenAfterPrecomputation([]byte{}, header, &nonce, c.sharedKey)
-	if ! success {
+	if !success {
 		err = errors.New("OpenAfterPrecomputation failed on header")
 		return
 	}
@@ -71,7 +88,7 @@ func (c conn) unbufferedRead(b []byte) (n int, err error) {
 	}
 
 	decrypted, success := box.OpenAfterPrecomputation([]byte{}, data, &nonce, c.sharedKey)
-	if ! success {
+	if !success {
 		err = errors.New("OpenAfterPrecomputation failed on data")
 		return
 	}
@@ -86,13 +103,12 @@ func (c conn) unbufferedRead(b []byte) (n int, err error) {
 		}
 	}
 
-
 	return
 }
 
 func (c conn) Write(b []byte) (n int, err error) {
 	var writebuf []byte
-	outLen := len(b)+box.Overhead
+	outLen := len(b) + box.Overhead
 	var nonce [24]byte
 	n, err = rand.Read(nonce[:])
 	if err != nil {
@@ -154,12 +170,14 @@ func Wrap(oc net.Conn) (nc Conn, err error) {
 	box.Precompute(&shared, &serverKey, &priv)
 
 	nc = conn{
-		Conn:                    oc,
-		bufferedRead:            bRead,
-		privateKey:              &priv,
-		PublicKey:               &pub,
-		ServerPublicKey:         &serverKey,
-		sharedKey:               &shared,
+		Conn:            oc,
+		bufferedRead:    bRead,
+		lastRead:        make([]byte, 1),
+		isUnread:        false,
+		privateKey:      &priv,
+		PublicKey:       &pub,
+		ServerPublicKey: &serverKey,
+		sharedKey:       &shared,
 	}
 	return
 }
