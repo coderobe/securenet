@@ -14,6 +14,7 @@ import (
 
 type Conn interface {
 	net.Conn
+	io.ByteScanner
 }
 
 type conn struct {
