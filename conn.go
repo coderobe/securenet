@@ -15,6 +15,8 @@ import (
 type Conn interface {
 	net.Conn
 	io.ByteScanner
+	GetPublicKey() *[32]byte
+	GetServerPublicKey() *[32]byte
 }
 
 type conn struct {
@@ -27,6 +29,14 @@ type conn struct {
 	ServerPublicKey *[32]byte
 	sharedKey       *[32]byte
 	buffer          []byte
+}
+
+func (c conn) GetPublicKey() *[32]byte {
+	return c.PublicKey
+}
+
+func (c conn) GetServerPublicKey() *[32]byte {
+	return c.ServerPublicKey
 }
 
 func (c conn) ReadByte() (b byte, err error) {
@@ -138,10 +148,7 @@ func (c conn) Write(b []byte) (n int, err error) {
 	return c.Conn.Write(writebuf)
 }
 
-func Wrap(oc net.Conn) (nc Conn, err error) {
-	var pub [32]byte
-	var priv [32]byte
-	var elligator [32]byte
+func GenerateKeys() (pub, priv, elligator [32]byte, err error) {
 	for {
 		_, err = io.ReadFull(rand.Reader, priv[:])
 		if err != nil {
@@ -151,7 +158,20 @@ func Wrap(oc net.Conn) (nc Conn, err error) {
 			break
 		}
 	}
+	return
+}
 
+// This generates a keypair for the connection
+func Wrap(oc net.Conn) (nc Conn, err error) {
+	pub, priv, elligator, err := GenerateKeys()
+	if err != nil {
+		return
+	}
+	return WrapWithKeys(oc, pub, priv, elligator)
+}
+
+// This allows reusing a previously generated keypair for the connection
+func WrapWithKeys(oc net.Conn, pub, priv, elligator [32]byte) (nc Conn, err error) {
 	_, err = oc.Write(elligator[:])
 	if err != nil {
 		return
