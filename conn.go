@@ -55,7 +55,7 @@ func (c conn) UnreadByte() (err error) {
 }
 
 func (c conn) Read(b []byte) (n int, err error) {
-	copied := copy(c.buffer, b)
+	copied := copy(b, c.buffer)
 	newBuf := make([]byte, len(c.buffer)-copied)
 	c.buffer = newBuf
 	if copied < len(b) {
